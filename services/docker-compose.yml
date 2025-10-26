@@ -1,0 +1,15 @@
+services:
+  imdtravel:
+    build: imdtravel
+    ports:
+      - "8080:80"
+    networks:
+      - imdtravel-net
+  # airlineshub:
+  #   build:
+  #     context: airlineshub
+  #   ports:
+  #     - "8081:80"
+networks:
+  imdtravel-net:
+    driver: bridge

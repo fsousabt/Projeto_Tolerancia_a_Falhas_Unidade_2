@@ -1,0 +1,5 @@
+.git
+.gitignore
+*.exe
+imdtravel-service
+.DS_Store
