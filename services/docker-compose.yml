@@ -5,6 +5,8 @@ services:
       - "8080:80"
     networks:
       - imdtravel-net
+    env_file:
+      - .env
   # airlineshub:
   #   build:
   #     context: airlineshub
