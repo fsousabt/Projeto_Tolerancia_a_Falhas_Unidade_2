@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 
@@ -14,16 +15,16 @@ type BuyTicketRequest struct {
 	User   string `json:"user"`
 }
 
+type BuyTicketResponse struct {
+	TransactionID string `json:"transactionID"`
+}
+
 type Ticket struct {
 	TransactionID uuid.UUID `json:"transactionID"`
 	FlightNumber  string    `json:"flight"`
 	FlightDay     string    `json:"day"`
 	UserID        string    `json:"user"`
 	Status        string    `json:"status"`
-}
-
-type BuyTicketResponse struct {
-	TransactionID string `json:"transactionID"`
 }
 
 type FlightRequest struct {
@@ -66,6 +67,33 @@ func parseDate(day string) error {
 	return nil
 }
 
+func GetFlight(flight string, day string) (*FlightData, error) {
+	endpoint := fmt.Sprintf("%s/flight?flight=%s&day=%s",
+		cfg.URL.AirlinesHub,
+		flight,
+		day,
+	)
+
+	req, err := http.NewRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("Erro ao criar requisição para %s", endpoint)
+	}
+
+	client := &http.Client{}
+	response, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("Erro ao fazer requisição para %s", endpoint)
+	}
+	defer response.Body.Close()
+
+	var flightData FlightData
+	if err := json.NewDecoder(response.Body).Decode(&flightData); err != nil {
+		return nil, fmt.Errorf("Erro ao decodificar resposta de AirlinesHub")
+	}
+
+	return &flightData, nil
+}
+
 func buyTicketHandler(w http.ResponseWriter, r *http.Request) {
 	var body BuyTicketRequest
 	err := json.NewDecoder(r.Body).Decode(&body)
@@ -99,6 +127,13 @@ func buyTicketHandler(w http.ResponseWriter, r *http.Request) {
 	ticketDB[ticket.TransactionID] = ticket
 
 	log.Printf("Ticket armazenado no banco de dados, ID: %s", ticket.TransactionID.String())
+
+	FlightData, err := GetFlight(ticket.FlightNumber, ticket.FlightDay)
+	if err != nil {
+
+	}
+
+	log.Printf("Voo buscado com sucesso. Dados de voo: %+v", FlightData)
 
 	response := BuyTicketResponse{
 		TransactionID: transactionID.String(),

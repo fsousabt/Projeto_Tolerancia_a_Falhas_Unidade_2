@@ -42,4 +42,28 @@ Response: {"transactionID":"019a2220-9ff6-7d85-9cbd-7ffd84639366"}
 
 ### AirlinesHub
 
+GET http://localhost:8081/flight
+
+Query Params:
+
+- flight (string)
+
+- day (string)
+
+Response: {"flight": string,"day": string, "value": float}
+
+Example:
+
+GET http://localhost:8081/flight?flight="05A8EF14"&day="2025-12-25"
+
+Response: {"flight":"05A8EF14","day":"2025-12-25","value":207.35}
+
+### Exchange
+
 ...
+
+### Fidelity
+
+...
+
+

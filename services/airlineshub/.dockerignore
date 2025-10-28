@@ -1,0 +1,5 @@
+.git
+.gitignore
+*.exe
+airlineshub-service
+.DS_Store

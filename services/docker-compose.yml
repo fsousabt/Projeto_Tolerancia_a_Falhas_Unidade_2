@@ -1,17 +1,22 @@
 services:
   imdtravel:
     build: imdtravel
+    container_name: imdtravel-service
     ports:
       - "8080:80"
     networks:
       - imdtravel-net
     env_file:
       - .env
-  # airlineshub:
-  #   build:
-  #     context: airlineshub
-  #   ports:
-  #     - "8081:80"
+  airlineshub:
+    build: airlineshub
+    container_name: airlineshub-service
+    ports:
+      - "8081:80"
+    networks:
+      - imdtravel-net
+    env_file:
+      - .env
 networks:
   imdtravel-net:
     driver: bridge
