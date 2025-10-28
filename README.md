@@ -7,7 +7,16 @@ Para rodar este projeto, você precisará ter o [Docker](https://www.docker.com/
 ## Como Rodar o Projeto
 
 1.  Clone o repositório.
-2.  Na pasta `services/` execute:
+2. Copie o arquivo .env.example e renomeie-o para .env e modifique-o caso necessário
+
+Exemplo:
+
+```bash
+cp .env.example .env
+
+```
+
+3.  Na pasta `services/` execute:
 
 ```bash
 docker compose up --build
