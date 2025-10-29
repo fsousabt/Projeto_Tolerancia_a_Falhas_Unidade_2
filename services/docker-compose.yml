@@ -17,6 +17,16 @@ services:
       - imdtravel-net
     env_file:
       - .env
+
+  exchange:
+      build: exchange
+      container_name: exchange-service
+      ports:
+        - "8082:80"
+      networks:
+        - imdtravel-net
+      env_file:
+        - .env
 networks:
   imdtravel-net:
     driver: bridge
