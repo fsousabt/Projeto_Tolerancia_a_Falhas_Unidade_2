@@ -69,7 +69,15 @@ Response: {"flight":"05A8EF14","day":"2025-12-25","value":207.35}
 
 ### Exchange
 
-...
+GET http://localhost:808/convert
+
+Response: {"value": float}
+
+Example:
+
+GET http://localhost:8082/convert
+
+Response: {"value":5.9}
 
 ### Fidelity
 
