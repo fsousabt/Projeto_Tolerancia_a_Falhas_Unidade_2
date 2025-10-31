@@ -27,6 +27,16 @@ services:
         - imdtravel-net
       env_file:
         - .env
+
+  fidelity:
+      build: fidelity
+      container_name: fidelity-service
+      ports:
+        - "8083:80"
+      networks:
+        - imdtravel-net
+      env_file:
+        - .env
 networks:
   imdtravel-net:
     driver: bridge
