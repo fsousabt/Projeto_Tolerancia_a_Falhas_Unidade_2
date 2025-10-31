@@ -8,6 +8,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"strconv"
 
 	"github.com/google/uuid"
 )
@@ -257,6 +258,10 @@ func buyTicketHandler(w http.ResponseWriter, r *http.Request) {
 
 	price := dolarExchangeRate * flightData.Value
 
+	price, _ = strconv.ParseFloat(fmt.Sprintf("%.2f", price), 64)
+
+	log.Printf("Valor convertido para real com sucesso: %.2f", price)
+
 	ticket := Ticket{
 		FlightNumber: body.Flight,
 		FlightDay:    body.Day,
@@ -291,6 +296,8 @@ func buyTicketHandler(w http.ResponseWriter, r *http.Request) {
 	response := BuyTicketResponse{
 		TransactionID: transactionID.String(),
 	}
+
+	log.Printf("Retornando ID da transação: %s", transactionID.String())
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
