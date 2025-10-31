@@ -8,6 +8,7 @@ services:
       - imdtravel-net
     env_file:
       - .env
+
   airlineshub:
     build: airlineshub
     container_name: airlineshub-service
@@ -37,6 +38,7 @@ services:
         - imdtravel-net
       env_file:
         - .env
+
 networks:
   imdtravel-net:
     driver: bridge

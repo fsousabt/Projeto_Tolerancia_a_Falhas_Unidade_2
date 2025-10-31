@@ -7,6 +7,8 @@ import (
 	"math/rand"
 	"net/http"
 	"strconv"
+
+	"github.com/google/uuid"
 )
 
 type Flight struct {
@@ -26,6 +28,10 @@ type FlightResponse struct {
 	Value  float64 `json:"value"`
 }
 
+type SellResponse struct {
+	TransactionID string `json:"transactionID"`
+}
+
 func main() {
 	serviceName := "AirlinesHub"
 	log.Printf("Iniciando serviço %s...", serviceName)
@@ -33,6 +39,7 @@ func main() {
 
 	mux.HandleFunc("GET /healthcheck", healthCheckHandler)
 	mux.HandleFunc("GET /flight", flightHandler)
+	mux.HandleFunc("POST /sell", sellHandler)
 
 	port := ":80"
 	log.Printf("Serviço %s rodando na porta %s", serviceName, port[1:])
@@ -72,6 +79,8 @@ func flightHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("Valores recebidos - flight: %v, day: %v\n", flightCode, flightDay)
+
 	flight := FlightRequest{
 		Flight: flightCode,
 		Day:    flightDay,
@@ -81,6 +90,8 @@ func flightHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Fatalf("Erro ao converter string válida: %v", err)
 	}
+
+	log.Printf("Preço da passagem do voo: %v\n", randValue)
 
 	f := Flight{
 		Code:  flight.Flight,
@@ -94,7 +105,35 @@ func flightHandler(w http.ResponseWriter, r *http.Request) {
 		Value:  f.Value,
 	}
 
+	log.Println("Retornando requisição com sucesso!")
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(flightResponse)
+}
+
+func sellHandler(w http.ResponseWriter, r *http.Request) {
+	var req FlightRequest
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		log.Printf("ERRO: Falha ao decodificar JSON do body: %v", err)
+		http.Error(w, "JSON inválido: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("Iniciando processo de venda: %+v", req)
+
+	transactionID := uuid.New()
+
+	resp := SellResponse{
+		TransactionID: transactionID.String(),
+	}
+
+	log.Printf("Venda processada com sucesso. ID: %s", resp.TransactionID)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Printf("ERRO: Falha ao escrever resposta JSON: %v", err)
+	}
 }
