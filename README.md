@@ -81,6 +81,20 @@ Response: {"value":5.9}
 
 ### Fidelity
 
-...
+GET http://localhost:8080/healthcheck
 
+Response: {"message": "OK"}
 
+POST http://localhost:8080/bonus
+
+Payload:{"user": string,"bonus": int}
+
+Response:{"message": "Bônus registrado com sucesso"}
+
+Example:
+
+POST http://localhost:8080/bonus
+
+Payload:{"user": "user123","bonus": 75}
+
+Response:{"message": "Bônus registrado com sucesso"}
