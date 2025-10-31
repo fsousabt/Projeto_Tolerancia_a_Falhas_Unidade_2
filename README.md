@@ -1,5 +1,9 @@
 # Projeto Tolerancia a Falhas Unidade 2
 
+## Integrantes do Grupo
+- Felipe Barauna Costa Sousa (felipe.barauna.131@ufrn.edu.br)
+- Ivison Santana Cau Filho (ivisoncaufilho@gmail.com)
+
 ## Pré-requisitos
 
 Para rodar este projeto, você precisará ter o [Docker](https://www.docker.com/) e o Docker Compose instalados em sua máquina.
