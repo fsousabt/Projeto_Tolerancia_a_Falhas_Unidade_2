@@ -100,7 +100,7 @@ func getDolarRatePrice() (float64, error) {
 	}
 
 	if withFailure || rand.Float64() <= fail.Probability {
-		log.Println("ERRO: falha ao tentar buscar valor do dolar")
+		log.Println("[FAILURE] Falha por erro")
 
 		err := fail.makeFailure()
 		return -1, err
