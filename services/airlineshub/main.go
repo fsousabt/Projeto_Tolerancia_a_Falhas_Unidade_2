@@ -7,9 +7,33 @@ import (
 	"math/rand"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 )
+
+var withFailure = false
+
+type Fail struct {
+	Type        string
+	Probability float64
+	Duration    int
+}
+
+func (f Fail) makeFailure() {
+	if withFailure == false {
+		log.Println("[FAILURE] Iniciando estado de falha")
+		withFailure = true
+		go func() {
+			log.Printf("[FAILURE] Sistema ficará em estado de falha por %d segundos", f.Duration)
+			time.Sleep(time.Second * time.Duration(f.Duration))
+			withFailure = false
+			log.Println("[FAILURE] Encerrando estado de falha")
+		}()
+	}
+
+	// TODO
+}
 
 type Flight struct {
 	Code  string

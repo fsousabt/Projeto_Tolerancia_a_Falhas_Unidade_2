@@ -10,13 +10,38 @@ com variação entre 1/5 e 1/6 (ou seja, 1 dólar pode variar entre 5 e 6 reais)
 */
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"math/rand"
 	"net/http"
+	"time"
 )
 
 type ExchangeToDolarResponse struct {
 	Value float64 `json:"value"`
+}
+
+var withFailure = false
+
+type Fail struct {
+	Type        string
+	Probability float64
+	Duration    int
+}
+
+func (f Fail) makeFailure() error {
+	if withFailure == false {
+		log.Println("[FAILURE] Iniciando estado de falha")
+		withFailure = true
+		go func() {
+			log.Printf("[FAILURE] Sistema ficará em estado de falha por %d segundos", f.Duration)
+			time.Sleep(time.Second * time.Duration(f.Duration))
+			withFailure = false
+			log.Println("[FAILURE] Encerrando estado de falha")
+		}()
+	}
+
+	return errors.New("falha ao tentar buscar valor do dolar")
 }
 
 func main() {
@@ -44,24 +69,47 @@ func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func conversionToDolar(w http.ResponseWriter, r *http.Request) {
-
-	rate := generateRandomRateValue()
+	rate, err := getDolarRatePrice()
+	if err != nil {
+		errMsg := struct {
+			Message string `json:"message"`
+		}{
+			Message: err.Error(),
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(errMsg)
+		return
+	}
 
 	rateDolarResponse := ExchangeToDolarResponse{
 		Value: rate,
 	}
 
-	w.Header().Set("Contentt-Type", "application/json")
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(rateDolarResponse)
 
 }
 
-func generateRandomRateValue() float64 {
+func getDolarRatePrice() (float64, error) {
+	fail := Fail{
+		Type:        "Error",
+		Probability: 0.1,
+		Duration:    5,
+	}
+
+	if withFailure || rand.Float64() <= fail.Probability {
+		log.Println("ERRO: falha ao tentar buscar valor do dolar")
+
+		err := fail.makeFailure()
+		return -1, err
+	}
+
 	min := 5.0
 	max := 6.0
 
 	value := min + rand.Float64()*(max-min)
 
-	return value
+	return value, nil
 }
