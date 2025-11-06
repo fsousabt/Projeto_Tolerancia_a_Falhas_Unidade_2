@@ -7,9 +7,45 @@ import (
 	"math/rand"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 )
+
+var withOmissionFailure = false
+var withTimeFailure = false
+
+type Fail struct {
+	Type        string
+	Probability float64
+	Duration    int
+}
+
+func (f Fail) makeOmissionFailure() {
+	if withOmissionFailure == false {
+		log.Println("[FAILURE] (Omissão) Iniciando estado de falha")
+		withOmissionFailure = true
+		go func() {
+			log.Printf("[FAILURE] (Omissão) Sistema ficará em estado de falha por %d segundos", f.Duration)
+			time.Sleep(time.Second * time.Duration(f.Duration))
+			withOmissionFailure = false
+			log.Println("[FAILURE] (Omissão) Encerrando estado de falha")
+		}()
+	}
+}
+
+func (f Fail) makeTimeFailure() {
+	if withTimeFailure == false {
+		log.Println("[FAILURE] (Time) Iniciando estado de falha")
+		withTimeFailure = true
+		go func() {
+			log.Printf("[FAILURE] (Time) Sistema ficará em estado de falha por 10 segundos")
+			time.Sleep(time.Second * time.Duration(10))
+			withTimeFailure = false
+			log.Println("[FAILURE] (Time) Encerrando estado de falha")
+		}()
+	}
+}
 
 type Flight struct {
 	Code  string
@@ -65,6 +101,17 @@ func generateRandomFlightValue() string {
 }
 
 func flightHandler(w http.ResponseWriter, r *http.Request) {
+	fail := Fail{
+		Type:        "Omission",
+		Probability: 0.2,
+		Duration:    0,
+	}
+	if withOmissionFailure || rand.Float64() <= fail.Probability {
+		log.Println("[FAILURE] Falha por omissão")
+		fail.makeOmissionFailure()
+		return
+	}
+
 	query := r.URL.Query()
 	flightCode := query.Get("flight")
 	flightDay := query.Get("day")
@@ -113,6 +160,27 @@ func flightHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func sellHandler(w http.ResponseWriter, r *http.Request) {
+
+	fail := Fail{
+		Type:        "Time",
+		Probability: 0.1,
+		Duration:    5,
+	}
+
+	if withTimeFailure || rand.Float64() <= fail.Probability {
+		log.Println("[FAILURE] Falha por Time")
+		fail.makeTimeFailure()
+	}
+
+	if withTimeFailure {
+		log.Printf("[FAILURE] (Time) Paciência! O Sistema está lento!")
+
+		for i := fail.Duration; i > 0; i-- {
+			log.Printf("[FAILURE] (Time) Aguarde... %d", i)
+			time.Sleep(1 * time.Second)
+		}
+	}
+
 	var req FlightRequest
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {

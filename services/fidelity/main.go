@@ -3,12 +3,19 @@ package main
 import (
 	"encoding/json"
 	"log"
+	"math/rand"
 	"net/http"
+	"os"
 )
 
 type BonusRequest struct {
 	User  string `json:"user"`
 	Bonus int    `json:"bonus"`
+}
+
+type Fail struct {
+	Type        string
+	Probability float64
 }
 
 func main() {
@@ -39,6 +46,16 @@ func bonusHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Método não permitido", http.StatusMethodNotAllowed)
 		return
+	}
+	//Simulação de falha - Crash - Request 4|Crash (Stop)| 0.02 | indefinido
+	fail := Fail{
+		Type:        "Crash",
+		Probability: 0.02,
+	}
+
+	if rand.Float64() < fail.Probability {
+		log.Println("[FAILURE] Falha por Crash - Encerrando serviço")
+		os.Exit(1) //Processo encerrado
 	}
 
 	var req BonusRequest
