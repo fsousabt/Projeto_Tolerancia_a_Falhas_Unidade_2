@@ -1,3 +1,4 @@
+// imdtravel/main.go
 package main
 
 import (
@@ -59,6 +60,36 @@ type SellResponse struct {
 type FidelityRequest struct {
 	User  string `json:"user"`
 	Bonus int    `json:"bonus"`
+}
+
+type APIError struct {
+	StatusCode int    `json:"statusCode"`
+	Message    string `json:"message"`
+}
+
+func newAPIError(statusCode int, err error) *APIError {
+	return &APIError{
+		StatusCode: statusCode,
+		Message:    err.Error(),
+	}
+}
+
+func writeError(w http.ResponseWriter, err *APIError) {
+	writeJSON(w, err.StatusCode, map[string]string{"error": err.Message})
+}
+
+func writeJSON(w http.ResponseWriter, code int, payload any) {
+	response, err := json.Marshal(payload)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("erro interno ao codificar JSON"))
+		log.Printf("Erro ao fazer marshal do JSON: %v", err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	w.Write(response)
 }
 
 var ticketDB = make(map[uuid.UUID]Ticket)
@@ -141,6 +172,22 @@ func getDolarValueInReal() (float64, error) {
 		return -1, fmt.Errorf("falha ao fazer requisição para %s: %w", endpoint, err)
 	}
 	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(response.Body)
+
+		var errMsg struct {
+			Message string `json:"message"`
+		}
+
+		if err := json.Unmarshal(bodyBytes, &errMsg); err == nil && errMsg.Message != "" {
+			log.Printf("ERRO: Serviço Exchange retornou status %d: %s", response.StatusCode, errMsg.Message)
+			return -1, fmt.Errorf("serviço Exchange falhou, %s", errMsg.Message)
+		}
+
+		log.Printf("ERRO: Serviço Exchange retornou status não-OK %d: %s", response.StatusCode, string(bodyBytes))
+		return -1, fmt.Errorf("serviço Exchange retornou status não-OK %d", response.StatusCode)
+	}
 
 	var exchangeResponse ExchangeToDolarResponse
 	if err := json.NewDecoder(response.Body).Decode(&exchangeResponse); err != nil {
@@ -227,7 +274,8 @@ func buyTicketHandler(w http.ResponseWriter, r *http.Request) {
 	err := json.NewDecoder(r.Body).Decode(&body)
 	if err != nil {
 		log.Printf("ERRO: JSON inválido recebido: %v", err)
-		http.Error(w, "JSON inválido: "+err.Error(), http.StatusBadRequest)
+		apiErr := newAPIError(http.StatusBadRequest, fmt.Errorf("JSON inválido: %w", err))
+		writeError(w, apiErr)
 		return
 	}
 
@@ -235,7 +283,8 @@ func buyTicketHandler(w http.ResponseWriter, r *http.Request) {
 
 	if err := parseDate(body.Day); err != nil {
 		log.Printf("ERRO: Data em formato inválido: %s", body.Day)
-		http.Error(w, "Data em formato inválido", http.StatusBadRequest)
+		apiErr := newAPIError(http.StatusBadRequest, fmt.Errorf("data em formato inválido: %s", body.Day))
+		writeError(w, apiErr)
 		return
 	}
 
@@ -243,7 +292,9 @@ func buyTicketHandler(w http.ResponseWriter, r *http.Request) {
 
 	flightData, err := GetFlight(body.Flight, body.Day)
 	if err != nil {
-		http.Error(w, "Erro na tentativa de buscar dados do voo no serviço AirlinesHub.", http.StatusInternalServerError)
+		log.Printf("ERRO: falha ao buscar dados do voo: %v", err)
+		apiErr := newAPIError(http.StatusInternalServerError, fmt.Errorf("erro na tentativa de buscar dados do voo: %w", err))
+		writeError(w, apiErr)
 		return
 	}
 
@@ -252,7 +303,9 @@ func buyTicketHandler(w http.ResponseWriter, r *http.Request) {
 	log.Println("Buscando cotação do dolar em Exchange...")
 	dolarExchangeRate, err := getDolarValueInReal()
 	if err != nil {
-		http.Error(w, "Erro na tentativa de buscar cotação do dolar no serviço Exchange.", http.StatusInternalServerError)
+		log.Printf("ERRO: falha ao buscar cotação do dolar: %v", err)
+		apiErr := newAPIError(http.StatusInternalServerError, err)
+		writeError(w, apiErr)
 		return
 	}
 
@@ -273,7 +326,9 @@ func buyTicketHandler(w http.ResponseWriter, r *http.Request) {
 
 	transactionID, err := RequestTicketSell(ticket.FlightNumber, ticket.FlightDay)
 	if err != nil {
-		http.Error(w, "ERRO: falha ao realizar venda de ticket", http.StatusInternalServerError)
+		log.Printf("ERRO: falha ao realizar venda de ticket: %v", err)
+		apiErr := newAPIError(http.StatusInternalServerError, fmt.Errorf("falha ao realizar venda de ticket: %w", err))
+		writeError(w, apiErr)
 		return
 	}
 
@@ -286,7 +341,7 @@ func buyTicketHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Enviando bônus de %d (baseado no valor US$ %.2f) para usuário %s", bonus, flightData.Value, body.User)
 
-	statusCode, err := SendFidelityRequest(body.User, bonus)
+	_, err = SendFidelityRequest(body.User, bonus)
 	if err != nil {
 		log.Printf("AVISO: Falha ao enviar bônus da venda %s: %v", transactionID.String(), err)
 	} else {
@@ -299,7 +354,5 @@ func buyTicketHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Retornando ID da transação: %s", transactionID.String())
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(response)
+	writeJSON(w, http.StatusOK, response)
 }

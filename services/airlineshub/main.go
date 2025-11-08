@@ -7,9 +7,31 @@ import (
 	"math/rand"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 )
+
+var withOmissionFailure = false
+
+type Fail struct {
+	Type        string
+	Probability float64
+	Duration    int
+}
+
+func (f Fail) makeOmissionFailure() {
+	if withOmissionFailure == false {
+		log.Println("[FAILURE] (Omissão) Iniciando estado de falha")
+		withOmissionFailure = true
+		go func() {
+			log.Printf("[FAILURE] (Omissão) Sistema ficará em estado de falha por %d segundos", f.Duration)
+			time.Sleep(time.Second * time.Duration(f.Duration))
+			withOmissionFailure = false
+			log.Println("[FAILURE] (Omissão) Encerrando estado de falha")
+		}()
+	}
+}
 
 type Flight struct {
 	Code  string
@@ -65,6 +87,17 @@ func generateRandomFlightValue() string {
 }
 
 func flightHandler(w http.ResponseWriter, r *http.Request) {
+	fail := Fail{
+		Type:        "Omission",
+		Probability: 0.2,
+		Duration:    0,
+	}
+	if withOmissionFailure || rand.Float64() <= fail.Probability {
+		log.Println("[FAILURE] Falha por omissão")
+		fail.makeOmissionFailure()
+		return
+	}
+
 	query := r.URL.Query()
 	flightCode := query.Get("flight")
 	flightDay := query.Get("day")
