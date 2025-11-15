@@ -10,9 +10,18 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 )
+
+var httpClient = &http.Client{
+	Timeout: 2 * time.Second,
+}
+
+var flightCache = make(map[string]*FlightData)
+
+var dolarCache []float64 // guarda últimas cotações
 
 type BuyTicketRequest struct {
 	Flight string `json:"flight"`
@@ -67,6 +76,10 @@ type APIError struct {
 	Message    string `json:"message"`
 }
 
+type FaultToleranceConfig struct {
+	Ft string `json:"ft"`
+}
+
 func newAPIError(statusCode int, err error) *APIError {
 	return &APIError{
 		StatusCode: statusCode,
@@ -90,6 +103,21 @@ func writeJSON(w http.ResponseWriter, code int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	w.Write(response)
+}
+
+func cacheKey(flight, day string) string {
+	return flight + "|" + day
+}
+
+func avg(values []float64) float64 {
+	if len(values) == 0 {
+		return -1 // "não tem cache"
+	}
+	sum := 0.0
+	for _, v := range values {
+		sum += v
+	}
+	return sum / float64(len(values))
 }
 
 var ticketDB = make(map[uuid.UUID]Ticket)
@@ -121,6 +149,30 @@ func parseDate(day string) error {
 	return nil
 }
 
+// Função De Retry
+// T = tipo de retorno (aqui será *FlightData)
+// attempts = quantas tentativas
+// fn = função a ser chamada
+func retry[T any](attempts int, fn func() (T, error)) (T, error) {
+	var zero T
+	var err error
+
+	for i := 0; i < attempts; i++ {
+		var result T
+		result, err = fn()
+		if err == nil {
+			return result, nil
+		}
+
+		// backoff exponencial simples
+		sleep := time.Duration(math.Pow(2, float64(i))) * 200 * time.Millisecond
+		log.Printf("Tentativa %d falhou: %v — retry em %v", i+1, err, sleep)
+		time.Sleep(sleep)
+	}
+
+	return zero, err
+}
+
 func GetFlight(flight string, day string) (*FlightData, error) {
 	log.Printf("Iniciando busca por voo %s, dia %s", flight, day)
 
@@ -136,8 +188,7 @@ func GetFlight(flight string, day string) (*FlightData, error) {
 		return nil, fmt.Errorf("falha ao criar requisição para %s: %w", endpoint, err)
 	}
 
-	client := &http.Client{}
-	response, err := client.Do(req)
+	response, err := httpClient.Do(req)
 	if err != nil {
 		log.Printf("ERRO: falha ao fazer requisição para AirlinesHub (%s): %v", endpoint, err)
 		return nil, fmt.Errorf("falha ao fazer requisição para %s: %w", endpoint, err)
@@ -151,6 +202,7 @@ func GetFlight(flight string, day string) (*FlightData, error) {
 	}
 
 	log.Printf("Sucesso: Voo encontrado: %+v", flightData)
+	flightCache[cacheKey(flight, day)] = &flightData
 	return &flightData, nil
 }
 
@@ -196,7 +248,15 @@ func getDolarValueInReal() (float64, error) {
 	}
 
 	log.Printf("Sucesso: Cotação do dólar obtida: %.2f", exchangeResponse.Value)
+
+	// Atualiza cache mantendo os últimos 10 valores
+	dolarCache = append(dolarCache, exchangeResponse.Value)
+	if len(dolarCache) > 10 {
+		dolarCache = dolarCache[len(dolarCache)-10:]
+	}
+
 	return exchangeResponse.Value, nil
+
 }
 
 func RequestTicketSell(flight string, day string) (uuid.UUID, error) {
@@ -287,15 +347,25 @@ func buyTicketHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, apiErr)
 		return
 	}
-
 	log.Println("Buscando informações de voo em AirlinesHub...")
 
-	flightData, err := GetFlight(body.Flight, body.Day)
+	// ---- RETRY + TIMEOUT AQUI ----
+	flightData, err := retry[*FlightData](3, func() (*FlightData, error) {
+		return GetFlight(body.Flight, body.Day)
+	})
 	if err != nil {
-		log.Printf("ERRO: falha ao buscar dados do voo: %v", err)
-		apiErr := newAPIError(http.StatusInternalServerError, fmt.Errorf("erro na tentativa de buscar dados do voo: %w", err))
-		writeError(w, apiErr)
-		return
+		key := cacheKey(body.Flight, body.Day)
+		cached, ok := flightCache[key]
+
+		if ok {
+			log.Printf("AVISO: Falha ao buscar voo online, usando valor do cache: %+v", cached)
+			flightData = cached
+		} else {
+			log.Printf("ERRO: falha ao buscar dados do voo após retries e sem cache: %v", err)
+			apiErr := newAPIError(http.StatusInternalServerError, fmt.Errorf("erro ao buscar dados do voo: %w", err))
+			writeError(w, apiErr)
+			return
+		}
 	}
 
 	log.Printf("Voo buscado com sucesso. Dados de voo: %+v", flightData)
@@ -303,10 +373,21 @@ func buyTicketHandler(w http.ResponseWriter, r *http.Request) {
 	log.Println("Buscando cotação do dolar em Exchange...")
 	dolarExchangeRate, err := getDolarValueInReal()
 	if err != nil {
-		log.Printf("ERRO: falha ao buscar cotação do dolar: %v", err)
-		apiErr := newAPIError(http.StatusInternalServerError, err)
-		writeError(w, apiErr)
-		return
+		log.Printf("AVISO: falha ao buscar cotação do dólar: %v", err)
+
+		// tenta usar média das últimas 10 taxas
+		media := avg(dolarCache)
+
+		if media > 0 {
+			log.Printf("Usando média das últimas %d cotações: %.2f", len(dolarCache), media)
+			dolarExchangeRate = media
+		} else {
+			// sem cache -> erro real
+			log.Printf("ERRO: nenhum valor de cache disponível para cotação do dólar")
+			apiErr := newAPIError(http.StatusInternalServerError, fmt.Errorf("falha ao buscar cotação do dólar e cache vazio"))
+			writeError(w, apiErr)
+			return
+		}
 	}
 
 	price := dolarExchangeRate * flightData.Value
