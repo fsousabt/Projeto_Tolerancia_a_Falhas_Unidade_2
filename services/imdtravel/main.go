@@ -126,8 +126,41 @@ func avg(values []float64) float64 {
 
 var ticketDB = make(map[uuid.UUID]Ticket)
 
+type PendingBonusQueue struct {
+	ch chan FidelityRequest
+}
+
+var pendingBonusQueue PendingBonusQueue
+
+func processPendingBonus(queue <-chan FidelityRequest) {
+	log.Println("[processPendingBonus] Iniciando Worker de processamento assincrono de bonus")
+	var seconds time.Duration = 1
+	for bonus := range queue {
+		log.Println("[processPendingBonus] enviando requisição para processar a bonificação de fidelidade")
+		_, err := trySendFidelityRequest(bonus.User, bonus.Bonus)
+		if err != nil {
+			log.Printf("[processPendingBonus] Falha ao processar bonus para %s. Devolvendo para a fila. Próxima tentativa em %ds", bonus.User, seconds)
+			pendingBonusQueue.ch <- bonus
+			if seconds < 60 {
+				seconds++
+			}
+		} else {
+			log.Printf("[processPendingBonus] Bonus para %s processado com sucesso.", bonus.User)
+			seconds = 1
+		}
+		time.Sleep(seconds * time.Second)
+	}
+}
+
 func main() {
 	log.Println("Iniciando serviço IMDTravel...")
+
+	log.Println("Criando fila para processamento de bonus assincrono")
+	pendingBonusQueue.ch = make(chan FidelityRequest, 100)
+
+	log.Println("Iniciando Worker para processamento de bonus assincrono")
+	go processPendingBonus(pendingBonusQueue.ch)
+
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /healthcheck", healthCheckHandler)
@@ -317,7 +350,7 @@ func RequestTicketSell(flight string, day string) (uuid.UUID, error) {
 	return transactionUUID, nil
 }
 
-func SendFidelityRequest(userID string, bonus int) (int, error) {
+func trySendFidelityRequest(userID string, bonus int) (int, error) {
 	log.Printf("Iniciando requisição de bônus para usuário %s, valor %d", userID, bonus)
 
 	endpoint := fmt.Sprintf("%s/bonus", cfg.URL.Fidelity)
@@ -342,6 +375,18 @@ func SendFidelityRequest(userID string, bonus int) (int, error) {
 
 	log.Printf("Serviço Fidelity respondeu com status: %d", resp.StatusCode)
 	return resp.StatusCode, nil
+}
+
+func SendFidelityRequest(userID string, bonus int) (int, error) {
+	statusCode, err := trySendFidelityRequest(userID, bonus)
+
+	if err != nil {
+		log.Printf("[pendingBonusQueue] Adicionando bonus do usuario '%s' na fila para ser processado em outro momento", userID)
+		pendingBonusQueue.ch <- FidelityRequest{User: userID, Bonus: bonus}
+		return 0, err
+	}
+
+	return statusCode, nil
 }
 
 func buyTicketHandler(w http.ResponseWriter, r *http.Request) {
