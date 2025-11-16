@@ -39,23 +39,31 @@ docker compose up --build -d
 
 GET http://localhost:8080/healthcheck
 
-Response: {"message":"OK"}
+Response:
+```json
+{"message":"OK"}
+```
 
 POST http://localhost:8080/buyTicket (Rota principal)
 
 Payload:
 
+```json
 {
     "flight": "05A8EF14",
     "day": "2025-12-01",
     "user": "joao",
     "ft": true // Ou false
 }
+```
 
 Use o campo 'ft' do payload para dizer se a requisição deve utilizar das técnicas de tolerância a Falhas
 implementadas ou não.
 
-Response: {"transactionID":"019a2220-9ff6-7d85-9cbd-7ffd84639366"}
+Response:
+```json
+{"transactionID":"019a2220-9ff6-7d85-9cbd-7ffd84639366"}
+```
 
 ### AirlinesHub
 
@@ -67,53 +75,90 @@ Query Params:
 
 - day (string)
 
-Response: {"flight": string,"day": string, "value": float}
+Response:
+```json
+{"flight": string,"day": string, "value": float}
+```
 
 Example:
 
 GET http://localhost:8081/flight?flight="05A8EF14"&day="2025-12-25"
 
-Response: {"flight":"05A8EF14","day":"2025-12-25","value":207.35}
+Response:
+```json
+{"flight":"05A8EF14","day":"2025-12-25","value":207.35}
+```
 
 POST http://localhost:8081/sell
 
 Payload:
-
+```json
 {
     "flight": "05A8EF14",
     "day": "2025-12-01",
 }
+```
 
-Response: {"transactionID":"019a2220-9ff6-7d85-9cbd-7ffd84639366"}
+Response:
+```json
+{"transactionID":"019a2220-9ff6-7d85-9cbd-7ffd84639366"}
+```
 
 ### Exchange
 
 GET http://localhost:8082/convert
 
-Response: {"value": float}
+Response:
+```json
+{"value": float}
+```
 
 Example:
 
 GET http://localhost:8082/convert
 
-Response: {"value":5.9}
+Response:
+```json
+{"value":5.9}
+```
 
 ### Fidelity
 
 GET http://localhost:8083/healthcheck
 
-Response: {"message": "OK"}
+Response: 
+```json
+{"message": "OK"}
+```
 
 POST http://localhost:8083/bonus
 
-Payload:{"user": string,"bonus": int}
+Payload:
+```json
+{
+  "user": string,
+  "bonus": int
+}
+```
 
-Response:{"message": "Bônus registrado com sucesso"}
+Response:
+```json
+{"message": "Bônus registrado com sucesso"}
+```
 
 Example:
 
 POST http://localhost:8083/bonus
 
-Payload:{"user": "user123","bonus": 75}
+Payload:
+```json
+{
+  "user": "user123",
+  "bonus": 75
+}
+```
 
-Response:{"message": "Bônus registrado com sucesso"}
+Response:
+```json
+{"message": "Bônus registrado com sucesso"}
+```
