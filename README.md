@@ -48,8 +48,12 @@ Payload:
 {
     "flight": "05A8EF14",
     "day": "2025-12-01",
-    "user": "joao"
+    "user": "joao",
+    "ft": true // Ou false
 }
+
+Use o campo 'ft' do payload para dizer se a requisição deve utilizar das técnicas de tolerância a Falhas
+implementadas ou não.
 
 Response: {"transactionID":"019a2220-9ff6-7d85-9cbd-7ffd84639366"}
 
