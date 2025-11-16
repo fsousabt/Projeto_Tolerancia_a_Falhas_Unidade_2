@@ -53,7 +53,7 @@ Payload:
     "flight": "05A8EF14",
     "day": "2025-12-01",
     "user": "joao",
-    "ft": true // Ou false
+    "ft": true
 }
 ```
 
@@ -77,7 +77,7 @@ Query Params:
 
 Response:
 ```json
-{"flight": string,"day": string, "value": float}
+{"flight": "05B7EF14","day": "2025-08-12", "value": 105.20}
 ```
 
 Example:
@@ -110,7 +110,7 @@ GET http://localhost:8082/convert
 
 Response:
 ```json
-{"value": float}
+{"value": 5.3}
 ```
 
 Example:
@@ -136,8 +136,8 @@ POST http://localhost:8083/bonus
 Payload:
 ```json
 {
-  "user": string,
-  "bonus": int
+  "user": "user-123",
+  "bonus": 305
 }
 ```
 
