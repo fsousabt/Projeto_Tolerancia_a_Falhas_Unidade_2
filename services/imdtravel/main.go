@@ -4,10 +4,12 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"math"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -104,6 +106,8 @@ func writeJSON(w http.ResponseWriter, code int, payload any) {
 	w.WriteHeader(code)
 	w.Write(response)
 }
+
+var ErrTicketSellTimeout = errors.New("Timeout excedido no processo de venda de passagem aérea.")
 
 func cacheKey(flight, day string) string {
 	return flight + "|" + day
@@ -274,8 +278,19 @@ func RequestTicketSell(flight string, day string) (uuid.UUID, error) {
 		return uuid.Nil, fmt.Errorf("falha ao serializar request body: %w", err)
 	}
 
-	resp, err := http.Post(endpoint, "application/json", bytes.NewBuffer([]byte(reqData)))
+	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer([]byte(reqData)))
 	if err != nil {
+		log.Printf("ERRO: falha ao montar requisição POST para %s: %v\n", endpoint, err)
+		return uuid.Nil, fmt.Errorf("falha ao montar requisição POST para %s: %w", endpoint, err)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			log.Println("Falha na requisição devido a alta latência. Timeout de 2s excedido.")
+			return uuid.Nil, ErrTicketSellTimeout
+		}
 		log.Printf("ERRO: falha ao enviar requisição POST para %s: %v\n", endpoint, err)
 		return uuid.Nil, fmt.Errorf("falha ao enviar requisição POST para %s: %w", endpoint, err)
 	}
@@ -407,6 +422,14 @@ func buyTicketHandler(w http.ResponseWriter, r *http.Request) {
 
 	transactionID, err := RequestTicketSell(ticket.FlightNumber, ticket.FlightDay)
 	if err != nil {
+		if errors.Is(err, ErrTicketSellTimeout) {
+			log.Printf("[ERRO] (Falha Graciosa) " + err.Error())
+			ticket.Status = "FAILED"
+			log.Printf("[ERRO] Pagamento da passagem aérea não será processado!")
+			apiErr := newAPIError(http.StatusGatewayTimeout, fmt.Errorf("falha ao realizar venda de ticket: %w", err))
+			writeError(w, apiErr)
+			return
+		}
 		log.Printf("ERRO: falha ao realizar venda de ticket: %v", err)
 		apiErr := newAPIError(http.StatusInternalServerError, fmt.Errorf("falha ao realizar venda de ticket: %w", err))
 		writeError(w, apiErr)
