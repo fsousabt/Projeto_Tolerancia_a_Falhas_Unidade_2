@@ -1,13 +1,14 @@
-// imdtravel/main.go
 package main
 
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"math"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -15,9 +16,11 @@ import (
 	"github.com/google/uuid"
 )
 
-var httpClient = &http.Client{
+var ftHttpClient = &http.Client{
 	Timeout: 2 * time.Second,
 }
+
+var client = &http.Client{}
 
 var flightCache = make(map[string]*FlightData)
 
@@ -27,6 +30,7 @@ type BuyTicketRequest struct {
 	Flight string `json:"flight"`
 	Day    string `json:"day"`
 	User   string `json:"user"`
+	FaultToleranceConfig
 }
 
 type BuyTicketResponse struct {
@@ -77,7 +81,7 @@ type APIError struct {
 }
 
 type FaultToleranceConfig struct {
-	Ft string `json:"ft"`
+	Ft bool `json:"ft"`
 }
 
 func newAPIError(statusCode int, err error) *APIError {
@@ -105,6 +109,8 @@ func writeJSON(w http.ResponseWriter, code int, payload any) {
 	w.Write(response)
 }
 
+var ErrTicketSellTimeout = errors.New("Timeout excedido no processo de venda de passagem aérea.")
+
 func cacheKey(flight, day string) string {
 	return flight + "|" + day
 }
@@ -122,8 +128,41 @@ func avg(values []float64) float64 {
 
 var ticketDB = make(map[uuid.UUID]Ticket)
 
+type PendingBonusQueue struct {
+	ch chan FidelityRequest
+}
+
+var pendingBonusQueue PendingBonusQueue
+
+func processPendingBonus(queue <-chan FidelityRequest) {
+	log.Println("[processPendingBonus] Iniciando Worker de processamento assincrono de bonus")
+	var seconds time.Duration = 1
+	for bonus := range queue {
+		log.Println("[processPendingBonus] enviando requisição para processar a bonificação de fidelidade")
+		_, err := trySendFidelityRequest(bonus.User, bonus.Bonus)
+		if err != nil {
+			log.Printf("[processPendingBonus] Falha ao processar bonus para %s. Devolvendo para a fila. Próxima tentativa em %ds", bonus.User, seconds)
+			pendingBonusQueue.ch <- bonus
+			if seconds < 60 {
+				seconds++
+			}
+		} else {
+			log.Printf("[processPendingBonus] Bonus para %s processado com sucesso.", bonus.User)
+			seconds = 1
+		}
+		time.Sleep(seconds * time.Second)
+	}
+}
+
 func main() {
 	log.Println("Iniciando serviço IMDTravel...")
+
+	log.Println("Criando fila para processamento de bonus assincrono")
+	pendingBonusQueue.ch = make(chan FidelityRequest, 100)
+
+	log.Println("Iniciando Worker para processamento de bonus assincrono")
+	go processPendingBonus(pendingBonusQueue.ch)
+
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /healthcheck", healthCheckHandler)
@@ -173,7 +212,7 @@ func retry[T any](attempts int, fn func() (T, error)) (T, error) {
 	return zero, err
 }
 
-func GetFlight(flight string, day string) (*FlightData, error) {
+func GetFlight(ft bool, flight string, day string) (*FlightData, error) {
 	log.Printf("Iniciando busca por voo %s, dia %s", flight, day)
 
 	endpoint := fmt.Sprintf("%s/flight?flight=%s&day=%s",
@@ -188,7 +227,13 @@ func GetFlight(flight string, day string) (*FlightData, error) {
 		return nil, fmt.Errorf("falha ao criar requisição para %s: %w", endpoint, err)
 	}
 
-	response, err := httpClient.Do(req)
+	var response *http.Response
+	if ft {
+		response, err = ftHttpClient.Do(req)
+	} else {
+		response, err = client.Do(req)
+	}
+
 	if err != nil {
 		log.Printf("ERRO: falha ao fazer requisição para AirlinesHub (%s): %v", endpoint, err)
 		return nil, fmt.Errorf("falha ao fazer requisição para %s: %w", endpoint, err)
@@ -206,7 +251,7 @@ func GetFlight(flight string, day string) (*FlightData, error) {
 	return &flightData, nil
 }
 
-func getDolarValueInReal() (float64, error) {
+func getDolarValueInReal(ft bool) (float64, error) {
 	log.Println("Iniciando busca por cotação do dólar")
 
 	endpoint := fmt.Sprintf("%s/convert", cfg.URL.Exchange)
@@ -249,17 +294,19 @@ func getDolarValueInReal() (float64, error) {
 
 	log.Printf("Sucesso: Cotação do dólar obtida: %.2f", exchangeResponse.Value)
 
-	// Atualiza cache mantendo os últimos 10 valores
-	dolarCache = append(dolarCache, exchangeResponse.Value)
-	if len(dolarCache) > 10 {
-		dolarCache = dolarCache[len(dolarCache)-10:]
+	if ft {
+		// Atualiza cache mantendo os últimos 10 valores
+		dolarCache = append(dolarCache, exchangeResponse.Value)
+		if len(dolarCache) > 10 {
+			dolarCache = dolarCache[len(dolarCache)-10:]
+		}
 	}
 
 	return exchangeResponse.Value, nil
 
 }
 
-func RequestTicketSell(flight string, day string) (uuid.UUID, error) {
+func RequestTicketSell(ft bool, flight string, day string) (uuid.UUID, error) {
 	log.Printf("Iniciando requisição de venda para voo %s, dia %s\n", flight, day)
 
 	endpoint := fmt.Sprintf("%s/sell", cfg.URL.AirlinesHub)
@@ -274,8 +321,24 @@ func RequestTicketSell(flight string, day string) (uuid.UUID, error) {
 		return uuid.Nil, fmt.Errorf("falha ao serializar request body: %w", err)
 	}
 
-	resp, err := http.Post(endpoint, "application/json", bytes.NewBuffer([]byte(reqData)))
+	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer([]byte(reqData)))
 	if err != nil {
+		log.Printf("ERRO: falha ao montar requisição POST para %s: %v\n", endpoint, err)
+		return uuid.Nil, fmt.Errorf("falha ao montar requisição POST para %s: %w", endpoint, err)
+	}
+
+	var resp *http.Response
+	if ft {
+		resp, err = ftHttpClient.Do(req)
+	} else {
+		resp, err = client.Do(req)
+	}
+	if err != nil {
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			log.Println("Falha na requisição devido a alta latência. Timeout de 2s excedido.")
+			return uuid.Nil, ErrTicketSellTimeout
+		}
 		log.Printf("ERRO: falha ao enviar requisição POST para %s: %v\n", endpoint, err)
 		return uuid.Nil, fmt.Errorf("falha ao enviar requisição POST para %s: %w", endpoint, err)
 	}
@@ -302,7 +365,7 @@ func RequestTicketSell(flight string, day string) (uuid.UUID, error) {
 	return transactionUUID, nil
 }
 
-func SendFidelityRequest(userID string, bonus int) (int, error) {
+func trySendFidelityRequest(userID string, bonus int) (int, error) {
 	log.Printf("Iniciando requisição de bônus para usuário %s, valor %d", userID, bonus)
 
 	endpoint := fmt.Sprintf("%s/bonus", cfg.URL.Fidelity)
@@ -329,9 +392,32 @@ func SendFidelityRequest(userID string, bonus int) (int, error) {
 	return resp.StatusCode, nil
 }
 
+func SendFidelityRequest(ft bool, userID string, bonus int) (int, error) {
+	statusCode, err := trySendFidelityRequest(userID, bonus)
+
+	if ft {
+		if err != nil {
+			log.Printf("[pendingBonusQueue] Adicionando bonus do usuario '%s' na fila para ser processado em outro momento", userID)
+			pendingBonusQueue.ch <- FidelityRequest{User: userID, Bonus: bonus}
+			return 0, err
+		}
+	}
+
+	return statusCode, nil
+}
+
 func buyTicketHandler(w http.ResponseWriter, r *http.Request) {
 	var body BuyTicketRequest
 	err := json.NewDecoder(r.Body).Decode(&body)
+	log.Printf("%v", body.Ft)
+	ft := body.Ft
+	var complemento string
+	if ft {
+		complemento = "ativada"
+	} else {
+		complemento = "desativada"
+	}
+	log.Printf("[BuyTicketHandler] Tolerancia a falhas %s!", complemento)
 	if err != nil {
 		log.Printf("ERRO: JSON inválido recebido: %v", err)
 		apiErr := newAPIError(http.StatusBadRequest, fmt.Errorf("JSON inválido: %w", err))
@@ -349,20 +435,31 @@ func buyTicketHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Println("Buscando informações de voo em AirlinesHub...")
 
-	// ---- RETRY + TIMEOUT AQUI ----
-	flightData, err := retry[*FlightData](3, func() (*FlightData, error) {
-		return GetFlight(body.Flight, body.Day)
-	})
-	if err != nil {
-		key := cacheKey(body.Flight, body.Day)
-		cached, ok := flightCache[key]
+	var flightData *FlightData
+	if ft {
+		// ---- RETRY + TIMEOUT AQUI ----
+		flightData, err = retry[*FlightData](3, func() (*FlightData, error) {
+			return GetFlight(ft, body.Flight, body.Day)
+		})
+		if err != nil {
+			key := cacheKey(body.Flight, body.Day)
+			cached, ok := flightCache[key]
 
-		if ok {
-			log.Printf("AVISO: Falha ao buscar voo online, usando valor do cache: %+v", cached)
-			flightData = cached
-		} else {
-			log.Printf("ERRO: falha ao buscar dados do voo após retries e sem cache: %v", err)
-			apiErr := newAPIError(http.StatusInternalServerError, fmt.Errorf("erro ao buscar dados do voo: %w", err))
+			if ok {
+				log.Printf("AVISO: Falha ao buscar voo online, usando valor do cache: %+v", cached)
+				flightData = cached
+			} else {
+				log.Printf("ERRO: falha ao buscar dados do voo após retries e sem cache: %v", err)
+				apiErr := newAPIError(http.StatusInternalServerError, fmt.Errorf("erro ao buscar dados do voo: %w", err))
+				writeError(w, apiErr)
+				return
+			}
+		}
+	} else {
+		flightData, err = GetFlight(ft, body.Flight, body.Day)
+		if err != nil {
+			log.Printf("ERRO: falha ao buscar dados do voo: %v", err)
+			apiErr := newAPIError(http.StatusInternalServerError, fmt.Errorf("erro na tentativa de buscar dados do voo: %w", err))
 			writeError(w, apiErr)
 			return
 		}
@@ -371,20 +468,28 @@ func buyTicketHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Voo buscado com sucesso. Dados de voo: %+v", flightData)
 
 	log.Println("Buscando cotação do dolar em Exchange...")
-	dolarExchangeRate, err := getDolarValueInReal()
+	dolarExchangeRate, err := getDolarValueInReal(ft)
 	if err != nil {
-		log.Printf("AVISO: falha ao buscar cotação do dólar: %v", err)
+		if ft {
+			log.Printf("AVISO: falha ao buscar cotação do dólar: %v", err)
 
-		// tenta usar média das últimas 10 taxas
-		media := avg(dolarCache)
+			// tenta usar média das últimas 10 taxas
+			media := avg(dolarCache)
 
-		if media > 0 {
-			log.Printf("Usando média das últimas %d cotações: %.2f", len(dolarCache), media)
-			dolarExchangeRate = media
+			if media > 0 {
+				log.Printf("Usando média das últimas %d cotações: %.2f", len(dolarCache), media)
+				dolarExchangeRate = media
+			} else {
+				// sem cache -> erro real
+				log.Printf("ERRO: nenhum valor de cache disponível para cotação do dólar")
+				apiErr := newAPIError(http.StatusInternalServerError, fmt.Errorf("falha ao buscar cotação do dólar e cache vazio"))
+				writeError(w, apiErr)
+				return
+			}
+
 		} else {
-			// sem cache -> erro real
-			log.Printf("ERRO: nenhum valor de cache disponível para cotação do dólar")
-			apiErr := newAPIError(http.StatusInternalServerError, fmt.Errorf("falha ao buscar cotação do dólar e cache vazio"))
+			log.Printf("ERRO: falha ao buscar cotação do dolar: %v", err)
+			apiErr := newAPIError(http.StatusInternalServerError, err)
 			writeError(w, apiErr)
 			return
 		}
@@ -405,8 +510,18 @@ func buyTicketHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("Ticket criado com sucesso %+v", ticket)
 
-	transactionID, err := RequestTicketSell(ticket.FlightNumber, ticket.FlightDay)
+	transactionID, err := RequestTicketSell(ft, ticket.FlightNumber, ticket.FlightDay)
 	if err != nil {
+		if ft {
+			if errors.Is(err, ErrTicketSellTimeout) {
+				log.Printf("[ERRO] (Falha Graciosa) " + err.Error())
+				ticket.Status = "FAILED"
+				log.Printf("[ERRO] Pagamento da passagem aérea não será processado!")
+				apiErr := newAPIError(http.StatusGatewayTimeout, fmt.Errorf("falha ao realizar venda de ticket: %w", err))
+				writeError(w, apiErr)
+				return
+			}
+		}
 		log.Printf("ERRO: falha ao realizar venda de ticket: %v", err)
 		apiErr := newAPIError(http.StatusInternalServerError, fmt.Errorf("falha ao realizar venda de ticket: %w", err))
 		writeError(w, apiErr)
@@ -422,7 +537,7 @@ func buyTicketHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Enviando bônus de %d (baseado no valor US$ %.2f) para usuário %s", bonus, flightData.Value, body.User)
 
-	_, err = SendFidelityRequest(body.User, bonus)
+	_, err = SendFidelityRequest(ft, body.User, bonus)
 	if err != nil {
 		log.Printf("AVISO: Falha ao enviar bônus da venda %s: %v", transactionID.String(), err)
 	} else {
