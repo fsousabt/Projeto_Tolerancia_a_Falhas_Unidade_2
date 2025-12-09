@@ -12,21 +12,16 @@ export const options = {
   ]
 };
 
+if (__ENV.ft !== "true" && __ENV.ft !== "false") throw new Error("Variavel ft deve ser true ou false, cheque o README para mais detalhes.");
+const ft = __ENV.ft === "true" ? true : false
 
 export default function() {
   const payload = JSON.stringify({
     "flight": faker.strings.digitN(8),
     "day": faker.time.dateRange("2026-01-01", "2026-12-31", "yyyy-MM-dd"),
     "user": faker.person.firstName(),
-    "ft": false
+    "ft": ft
   });
-
-  // const payload = JSON.stringify({
-  //   "flight": "11111111",
-  //   "day": "2026-01-01",
-  //   "user": faker.person.firstName(),
-  //   "ft": false
-  // });
 
   const params = {
     headers: {
